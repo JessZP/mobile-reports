@@ -102,7 +102,7 @@ async function sentryGetPage(pathOrUrl, params = {}) {
   }
   const { status, headers, body } = await request('GET', url.toString(), sentryHeaders());
   if (status < 200 || status >= 300) {
-    throw new Error(`Sentry request failed (${status}): ${body.slice(0, 500)}`);
+    throw new Error(`Sentry request failed (${status}) ${url.pathname}${url.search}: ${body.slice(0, 500)}`);
   }
   return { data: JSON.parse(body), headers };
 }
@@ -232,14 +232,14 @@ async function buildProductSection({ config, platformKey, product }) {
 
 async function jiraSearch(config, jql, maxResults) {
   const baseUrl = config.jira.baseUrl.replace(/\/$/, '');
-  const url = `${baseUrl}/rest/api/3/search`;
+  const url = `${baseUrl}/rest/api/3/search/jql`;
   const { status, body } = await request('POST', url, jiraHeaders(), {
     jql,
     maxResults,
     fields: ['summary', 'status', 'resolutiondate', 'updated'],
   });
   if (status < 200 || status >= 300) {
-    throw new Error(`Jira search failed (${status}): ${body.slice(0, 500)}`);
+    throw new Error(`Jira search failed (${status}) ${url}: ${body.slice(0, 500)}`);
   }
   return JSON.parse(body).issues || [];
 }
