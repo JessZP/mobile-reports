@@ -1,0 +1,48 @@
+{
+  "sentryOrg": "afya",
+  "platforms": {
+    "ios": {
+      "label": "iOS",
+      "project": "apple-ios"
+    },
+    "android": {
+      "label": "Android",
+      "project": "android"
+    }
+  },
+  "products": [
+    {
+      "id": "medcel",
+      "displayName": "Medcel",
+      "environment": "medcel-production"
+    },
+    {
+      "id": "afyapapers",
+      "displayName": "Afya Papers",
+      "environment": "afyapapers-production"
+    },
+    {
+      "id": "internato",
+      "displayName": "Internato Afya",
+      "environment": "internatoafya-production"
+    }
+  ],
+  "jira": {
+    "baseUrl": "https://medcel.atlassian.net",
+    "titleTag": "Sentry-Fix"
+  },
+  "transactions": [
+    "auth.login",
+    "auth.password_recovery",
+    "video.play",
+    "exam.view",
+    "schedule_pace.view",
+    "home.view"
+  ],
+  "report": {
+    "topIssuesPerTransaction": 10,
+    "maxJiraIssues": 20,
+    "statsPeriod": "14d",
+    "otherTransactionLabel": "Outros / Sem transaction"
+  }
+}
