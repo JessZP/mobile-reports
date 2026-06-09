@@ -418,7 +418,7 @@ async function main() {
     html.div(html.i(`Escopo: issues não resolvidas filtradas pela release atual mais recente de cada app/environment; métricas de eventos/usuários dentro de ${escapeHtml(period)}.`)) +
     html.br() +
     html.h3('Releases consideradas') +
-    table(['Plataforma', 'Release (após @)'], platformReleaseRows) +
+    table(['Plataforma', 'Release'], platformReleaseRows) +
     html.hr() +
     html.h3('1. Quantos erros ativos estamos?') +
     table(['Plataforma', 'App', 'Issues Ativas'], issuesRows) +
