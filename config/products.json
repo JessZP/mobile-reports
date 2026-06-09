@@ -3,11 +3,13 @@
   "platforms": {
     "ios": {
       "label": "iOS",
-      "project": "apple-ios"
+      "project": "apple-ios",
+      "dashboardUrl": "https://afya.sentry.io/dashboard/5669641/?environment=afyapapers-production&environment=internatoafya-production&environment=medcel-production&project=4510640556605440&statsPeriod=7d"
     },
     "android": {
       "label": "Android",
-      "project": "android"
+      "project": "android",
+      "dashboardUrl": "https://afya.sentry.io/dashboard/229762/?environment=afyapapers-production&environment=internatoafya-production&environment=medcel-production&project=4510659557130240&statsPeriod=7d"
     }
   },
   "products": [
