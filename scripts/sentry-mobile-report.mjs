@@ -265,11 +265,6 @@ function fmtApproxUsers(n) {
   return fmtInt(v);
 }
 
-function fmtApproxInteger(n) {
-  const v = Number(n || 0);
-  return v >= 1000 ? `~${fmtInt(Math.round(v / 10) * 10)}` : fmtInt(v);
-}
-
 function table(headers, rows) {
   const th = headers.map(h => `<th align="left">${escapeHtml(h)}</th>`).join('');
   const trs = rows
@@ -298,19 +293,17 @@ function topProblemsByPlatform(platformResults, maxItems = 3) {
       const key = (issue.title || 'Sem título').trim();
       const current = grouped.get(key) || {
         title: key,
-        userCount: 0,
         count: 0,
-        maxSingleIssueUsers: 0,
+        maxSingleIssueCount: 0,
         shortId: issue.shortId,
         url: issue.url,
       };
 
-      current.userCount += Number(issue.userCount) || 0;
       current.count += Number(issue.count) || 0;
 
       // Mantém o link da issue com maior impacto para representar o problema.
-      if ((Number(issue.userCount) || 0) > current.maxSingleIssueUsers) {
-        current.maxSingleIssueUsers = Number(issue.userCount) || 0;
+      if ((Number(issue.count) || 0) > current.maxSingleIssueCount) {
+        current.maxSingleIssueCount = Number(issue.count) || 0;
         current.shortId = issue.shortId;
         current.url = issue.url;
       }
@@ -321,7 +314,7 @@ function topProblemsByPlatform(platformResults, maxItems = 3) {
     out.set(
       pr.label,
       [...grouped.values()]
-        .sort((a, b) => (b.userCount - a.userCount) || (b.count - a.count))
+        .sort((a, b) => b.count - a.count)
         .slice(0, maxItems)
     );
   }
@@ -355,6 +348,19 @@ async function main() {
   const period = config.report.statsPeriod;
   const periodRange = getPeriodDates(period);
 
+  const releaseRows = [];
+  for (const pr of platformResults) {
+    const sections = [...pr.productSections].sort((a, b) => a.product.displayName.localeCompare(b.product.displayName, 'pt-BR'));
+    for (const s of sections) {
+      releaseRows.push([
+        escapeHtml(pr.label),
+        escapeHtml(s.product.displayName),
+        html.code(escapeHtml(s.product.environment)),
+        html.code(escapeHtml(s.releases.current)),
+      ]);
+    }
+  }
+
   const issuesRows = [];
   let totalIssues = 0;
   for (const pr of platformResults) {
@@ -375,23 +381,22 @@ async function main() {
   const usersRows = usersPerPlatform.map(p => [escapeHtml(p.platform), fmtApproxUsers(p.users)]);
   usersRows.push([html.b('Total estimado'), html.b(fmtApproxUsers(totalUsersAll))]);
 
-  const transactionSections = platformResults.map(pr => {
+  const txRows = platformResults.flatMap(pr => {
     const platformIssues = pr.productSections.flatMap(s => s.currentIssues || []);
-    const txRows = computeTransactionImpact(platformIssues, config)
+    return computeTransactionImpact(platformIssues, config)
       .slice(0, 5)
-      .map(t => [escapeHtml(t.transaction), fmtApproxInteger(t.users)]);
-
-    return html.div(html.b(escapeHtml(pr.label))) +
-      (txRows.length
-        ? table(['Transaction', 'Usuários Impactados'], txRows)
-        : html.div('Sem transactions com impacto no período.'));
-  }).join(html.br());
+      .map(t => [escapeHtml(pr.label), escapeHtml(t.transaction), fmtApproxUsers(t.users)]);
+  });
 
   const topByPlatform = topProblemsByPlatform(platformResults, 3);
 
   let report =
     html.h2('📊 Relatório Sentry Mobile — Últimos 14 dias') +
     html.div(`${html.b('Período:')} ${escapeHtml(periodRange.text)}`) +
+    html.div(html.i(`Escopo: issues não resolvidas filtradas pela release atual mais recente de cada app/environment; métricas de eventos/usuários dentro de ${escapeHtml(period)}.`)) +
+    html.br() +
+    html.h3('Releases consideradas') +
+    table(['Plataforma', 'App', 'Environment', 'Release atual'], releaseRows) +
     html.hr() +
     html.h3('1. Quantos erros ativos estamos?') +
     table(['Plataforma', 'App', 'Issues Ativas'], issuesRows) +
@@ -401,13 +406,15 @@ async function main() {
     html.div(html.i('O mesmo usuário pode aparecer em mais de uma issue.')) +
     html.br() +
     html.h3('3. Quais transactions possuem maior impacto?') +
-    transactionSections +
+    (txRows.length
+      ? table(['Plataforma', 'Transaction', 'Usuários Impactados'], txRows)
+      : html.div('Sem transactions com impacto no período.')) +
     html.br() +
     html.h3('Principais erros observados') +
     platformResults.map(pr => {
       const issues = topByPlatform.get(pr.label) || [];
       if (!issues.length) return html.div(`${html.b(escapeHtml(pr.label))}: sem issues no período.`);
-      const items = issues.map(i => html.li(`${html.a(i.title || i.shortId, i.url)} ${html.i(`(${fmtApproxUsers(i.userCount)} usuários)`)}`));
+      const items = issues.map(i => html.li(`${html.a(i.title || i.shortId, i.url)}`));
       return html.div(html.b(escapeHtml(pr.label))) + html.ul(items);
     }).join('') +
     html.br() +
