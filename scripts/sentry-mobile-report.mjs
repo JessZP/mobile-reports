@@ -279,22 +279,13 @@ function table(headers, rows) {
 }
 
 function computeTransactionImpact(allIssues, config) {
-  const impacts = config.transactions.map((t) => {
+  return config.transactions.map((t) => {
     const issues = allIssues.filter(i => (i.transaction || '').toLowerCase().includes(t.toLowerCase()) || (i.title || '').toLowerCase().includes(t.toLowerCase()));
     const users = issues.reduce((s, i) => s + (Number(i.userCount) || 0), 0);
     return { transaction: t, users, issues: issues.length };
-  }).filter(x => x.users > 0);
-
-  const byKey = new Map(impacts.map(i => [i.transaction, i]));
-  const home = byKey.get('home.view');
-  const schedule = byKey.get('schedule_pace.view');
-  if (home && schedule) {
-    byKey.delete('home.view');
-    byKey.delete('schedule_pace.view');
-    byKey.set('home.view / schedule_pace.view', { transaction: 'home.view / schedule_pace.view', users: home.users + schedule.users, issues: home.issues + schedule.issues });
-  }
-
-  return [...byKey.values()].sort((a, b) => b.users - a.users);
+  })
+    .filter(x => x.users > 0)
+    .sort((a, b) => b.users - a.users);
 }
 
 function topProblemsByPlatform(platformResults, maxItems = 3) {
@@ -364,8 +355,6 @@ async function main() {
   const period = config.report.statsPeriod;
   const periodRange = getPeriodDates(period);
 
-  const allIssues = platformResults.flatMap(pr => pr.productSections.flatMap(s => s.currentIssues || []));
-
   const issuesRows = [];
   let totalIssues = 0;
   for (const pr of platformResults) {
@@ -386,9 +375,17 @@ async function main() {
   const usersRows = usersPerPlatform.map(p => [escapeHtml(p.platform), fmtApproxUsers(p.users)]);
   usersRows.push([html.b('Total estimado'), html.b(fmtApproxUsers(totalUsersAll))]);
 
-  const txRows = computeTransactionImpact(allIssues, config)
-    .slice(0, 5)
-    .map(t => [escapeHtml(t.transaction), fmtApproxInteger(t.users)]);
+  const transactionSections = platformResults.map(pr => {
+    const platformIssues = pr.productSections.flatMap(s => s.currentIssues || []);
+    const txRows = computeTransactionImpact(platformIssues, config)
+      .slice(0, 5)
+      .map(t => [escapeHtml(t.transaction), fmtApproxInteger(t.users)]);
+
+    return html.div(html.b(escapeHtml(pr.label))) +
+      (txRows.length
+        ? table(['Transaction', 'Usuários Impactados'], txRows)
+        : html.div('Sem transactions com impacto no período.'));
+  }).join(html.br());
 
   const topByPlatform = topProblemsByPlatform(platformResults, 3);
 
@@ -404,7 +401,7 @@ async function main() {
     html.div(html.i('O mesmo usuário pode aparecer em mais de uma issue.')) +
     html.br() +
     html.h3('3. Quais transactions possuem maior impacto?') +
-    (txRows.length ? table(['Transaction', 'Usuários Impactados'], txRows) : html.div('Sem transactions com impacto no período.')) +
+    transactionSections +
     html.br() +
     html.h3('Principais erros observados') +
     platformResults.map(pr => {
