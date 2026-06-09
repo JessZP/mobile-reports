@@ -30,6 +30,7 @@ function escapeHtml(value) {
 const html = {
   h2: (t) => `<h2>${t}</h2>`,
   h3: (t) => `<h3>${t}</h3>`,
+  h4: (t) => `<h4>${t}</h4>`,
   b: (t) => `<b>${t}</b>`,
   i: (t) => `<i>${t}</i>`,
   u: (t) => `<u>${t}</u>`,
@@ -273,6 +274,12 @@ function table(headers, rows) {
   return `<table><tr>${th}</tr>${trs}</table>`;
 }
 
+function releaseAfterAt(release) {
+  const r = String(release ?? '');
+  const idx = r.indexOf('@');
+  return idx >= 0 ? r.slice(idx + 1) : r;
+}
+
 function computeTransactionImpact(allIssues, config) {
   return config.transactions.map((t) => {
     const issues = allIssues.filter(i => (i.transaction || '').toLowerCase().includes(t.toLowerCase()) || (i.title || '').toLowerCase().includes(t.toLowerCase()));
@@ -348,18 +355,30 @@ async function main() {
   const period = config.report.statsPeriod;
   const periodRange = getPeriodDates(period);
 
-  const releaseRows = [];
-  for (const pr of platformResults) {
-    const sections = [...pr.productSections].sort((a, b) => a.product.displayName.localeCompare(b.product.displayName, 'pt-BR'));
-    for (const s of sections) {
-      releaseRows.push([
-        escapeHtml(pr.label),
-        escapeHtml(s.product.displayName),
-        html.code(escapeHtml(s.product.environment)),
-        html.code(escapeHtml(s.releases.current)),
-      ]);
+  const platformReleaseRows = platformResults.map(pr => {
+    const productionSections = pr.productSections.filter(s => /production/i.test(s.product.environment || ''));
+    const counts = new Map();
+    const order = [];
+
+    for (const s of productionSections) {
+      const suffix = releaseAfterAt(s.releases.current);
+      if (!suffix || suffix === 'n/a') continue;
+      if (!counts.has(suffix)) order.push(suffix);
+      counts.set(suffix, (counts.get(suffix) || 0) + 1);
     }
-  }
+
+    let best = 'n/a';
+    let bestCount = -1;
+    for (const k of order) {
+      const c = counts.get(k) || 0;
+      if (c > bestCount) {
+        best = k;
+        bestCount = c;
+      }
+    }
+
+    return [escapeHtml(pr.label), html.code(escapeHtml(best))];
+  });
 
   const issuesRows = [];
   let totalIssues = 0;
@@ -381,11 +400,14 @@ async function main() {
   const usersRows = usersPerPlatform.map(p => [escapeHtml(p.platform), fmtApproxUsers(p.users)]);
   usersRows.push([html.b('Total estimado'), html.b(fmtApproxUsers(totalUsersAll))]);
 
-  const txRows = platformResults.flatMap(pr => {
+  const txByPlatform = platformResults.map(pr => {
     const platformIssues = pr.productSections.flatMap(s => s.currentIssues || []);
-    return computeTransactionImpact(platformIssues, config)
-      .slice(0, 5)
-      .map(t => [escapeHtml(pr.label), escapeHtml(t.transaction), fmtApproxUsers(t.users)]);
+    return {
+      label: pr.label,
+      rows: computeTransactionImpact(platformIssues, config)
+        .slice(0, 5)
+        .map(t => [escapeHtml(t.transaction), fmtApproxUsers(t.users)]),
+    };
   });
 
   const topByPlatform = topProblemsByPlatform(platformResults, 3);
@@ -396,7 +418,7 @@ async function main() {
     html.div(html.i(`Escopo: issues não resolvidas filtradas pela release atual mais recente de cada app/environment; métricas de eventos/usuários dentro de ${escapeHtml(period)}.`)) +
     html.br() +
     html.h3('Releases consideradas') +
-    table(['Plataforma', 'App', 'Environment', 'Release atual'], releaseRows) +
+    table(['Plataforma', 'Release (após @)'], platformReleaseRows) +
     html.hr() +
     html.h3('1. Quantos erros ativos estamos?') +
     table(['Plataforma', 'App', 'Issues Ativas'], issuesRows) +
@@ -406,9 +428,12 @@ async function main() {
     html.div(html.i('O mesmo usuário pode aparecer em mais de uma issue.')) +
     html.br() +
     html.h3('3. Quais transactions possuem maior impacto?') +
-    (txRows.length
-      ? table(['Plataforma', 'Transaction', 'Usuários Impactados'], txRows)
-      : html.div('Sem transactions com impacto no período.')) +
+    txByPlatform.map((p, idx) => (
+      html.h4(`3.${idx + 1} ${escapeHtml(p.label)}`) +
+      (p.rows.length
+        ? table(['Transaction', 'Usuários Impactados'], p.rows)
+        : html.div('Sem transactions com impacto no período.'))
+    )).join('') +
     html.br() +
     html.h3('Principais erros observados') +
     platformResults.map(pr => {
