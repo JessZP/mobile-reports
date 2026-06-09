@@ -30,7 +30,6 @@ function escapeHtml(value) {
 const html = {
   h2: (t) => `<h2>${t}</h2>`,
   h3: (t) => `<h3>${t}</h3>`,
-  h4: (t) => `<h4>${t}</h4>`,
   b: (t) => `<b>${t}</b>`,
   i: (t) => `<i>${t}</i>`,
   u: (t) => `<u>${t}</u>`,
@@ -420,22 +419,22 @@ async function main() {
     html.h3('Releases consideradas') +
     table(['Plataforma', 'Release'], platformReleaseRows) +
     html.hr() +
-    html.h3('1. Quantos erros ativos estamos?') +
+    html.h2('1. Quantos erros ativos estamos?') +
     table(['Plataforma', 'App', 'Issues Ativas'], issuesRows) +
     html.br() +
-    html.h3('2. Quantos usuários foram impactados?') +
+    html.h2('2. Quantos usuários foram impactados?') +
     table(['Plataforma', 'Usuários Impactados'], usersRows) +
     html.div(html.i('O mesmo usuário pode aparecer em mais de uma issue.')) +
     html.br() +
-    html.h3('3. Quais transactions possuem maior impacto?') +
+    html.h2('3. Quais transactions possuem maior impacto?') +
     txByPlatform.map((p, idx) => (
-      html.h4(`3.${idx + 1} ${escapeHtml(p.label)}`) +
+      html.div(`${html.b(`3.${idx + 1}`)} ${html.b(escapeHtml(p.label))}`) +
       (p.rows.length
         ? table(['Transaction', 'Usuários Impactados'], p.rows)
         : html.div('Sem transactions com impacto no período.'))
     )).join('') +
     html.br() +
-    html.h3('Principais erros observados') +
+    html.h2('Principais erros observados') +
     platformResults.map(pr => {
       const issues = topByPlatform.get(pr.label) || [];
       if (!issues.length) return html.div(`${html.b(escapeHtml(pr.label))}: sem issues no período.`);
@@ -443,7 +442,7 @@ async function main() {
       return html.div(html.b(escapeHtml(pr.label))) + html.ul(items);
     }).join('') +
     html.br() +
-    html.h3('4. Quais erros estamos atuando atualmente?') +
+    html.h2('4. Quais erros estamos atuando atualmente?') +
     platformResults.map(pr => {
       const active = pr.jira?.active || [];
       const title = html.div(html.b(escapeHtml(pr.label)));
