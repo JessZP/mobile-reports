@@ -97,7 +97,11 @@ const jiraHeaders = () => {
 
 async function sentryGetPage(pathOrUrl, params = {}) {
   const url = pathOrUrl.startsWith('http') ? new URL(pathOrUrl) : new URL(`https://sentry.io/api/0${pathOrUrl}`);
-  for (const [k, v] of Object.entries(params)) if (v) url.searchParams.set(k, v);
+  for (const [k, v] of Object.entries(params)) {
+    if (v === null || v === undefined || v === '') continue;
+    if (Array.isArray(v)) v.forEach((item) => url.searchParams.append(k, item));
+    else url.searchParams.set(k, v);
+  }
   const { status, body, headers } = await request('GET', url.toString(), sentryHeaders());
   if (status < 200 || status >= 300) throw new Error(`Sentry error (${status}): ${body.slice(0, 300)}`);
   return { data: JSON.parse(body), headers };
@@ -114,6 +118,69 @@ async function sentryGetPaginated(path, params = {}, maxPages = 5) {
     nextUrl = next?.match(/<([^>]+)>/)?.[1] || null;
   }
   return rows;
+}
+
+// Same idea as sentryGetPaginated, but for endpoints (like organization events)
+// whose payload is `{ data: [...] }` instead of a bare array.
+async function sentryGetPaginatedEnvelope(path, params = {}, maxPages = 3) {
+  const rows = [];
+  let nextUrl = path;
+  for (let page = 0; nextUrl && page < maxPages; page++) {
+    const { data, headers } = await sentryGetPage(nextUrl, page === 0 ? params : {});
+    rows.push(...(Array.isArray(data) ? data : (data?.data || [])));
+    const link = headers?.link || '';
+    const next = link.split(',').find(p => p.includes('rel="next"') && p.includes('results="true"'));
+    nextUrl = next?.match(/<([^>]+)>/)?.[1] || null;
+  }
+  return rows;
+}
+
+const projectIdCache = new Map();
+async function getProjectId(org, projectSlug) {
+  const key = `${org}/${projectSlug}`;
+  if (projectIdCache.has(key)) return projectIdCache.get(key);
+  const { data } = await sentryGetPage(`/projects/${org}/${projectSlug}/`);
+  projectIdCache.set(key, data.id);
+  return data.id;
+}
+
+/**
+ * Fetches per-issue event/user counts that are ACTUALLY scoped to `period`.
+ * The project issues endpoint (used in getIssues) cannot do this: its `count`/
+ * `userCount` fields are lifetime totals regardless of `statsPeriod`. The only
+ * way to get a real windowed aggregate is the organization events (Discover)
+ * endpoint, which supports `count()` / `count_unique(user)` grouped by issue
+ * with a real `statsPeriod`/date range.
+ * Requires the Sentry token to have org-level read access; if that's missing
+ * (or the call fails for any reason) we log a warning and return an empty map
+ * so callers fall back to lifetime totals instead of breaking the report.
+ */
+async function getWindowedIssueMetrics(org, projectSlug, release, environment, period) {
+  const metrics = new Map();
+  if (release === 'n/a' || !period) return metrics;
+  try {
+    const projectId = await getProjectId(org, projectSlug);
+    const query = `is:unresolved release:"${release}" environment:"${environment}"`;
+    const rows = await sentryGetPaginatedEnvelope(`/organizations/${org}/events/`, {
+      field: ['issue', 'issue.id', 'count()', 'count_unique(user)'],
+      query,
+      project: [projectId],
+      statsPeriod: period,
+      sort: '-count()',
+      per_page: 100,
+    });
+    for (const row of rows) {
+      const id = String(row['issue.id'] ?? '');
+      if (!id) continue;
+      metrics.set(id, {
+        count: Number(row['count()'] || 0),
+        userCount: Number(row['count_unique(user)'] || 0),
+      });
+    }
+  } catch (err) {
+    console.warn(`Aviso: falha ao buscar métricas por janela (${period}) para ${projectSlug}/${release} (${err.message}). Usando total acumulado da issue como fallback.`);
+  }
+  return metrics;
 }
 
 /**
@@ -155,27 +222,41 @@ async function getReleasesForProduct(org, project, product) {
   return { current, previous, isFallback: false };
 }
 
-async function getIssues(org, project, release, environment, statsPeriod) {
+async function getIssues(org, project, release, environment, activeWindow) {
   if (release === 'n/a') return [];
-  // Use a query that combines release and environment for precision
-  const query = `is:unresolved release:"${release}" environment:"${environment}"`;
+  // Combine release and environment for precision. The project issues endpoint
+  // does NOT scope `count`/`userCount` to a `statsPeriod` param - that param only
+  // controls the `stats` sparkline field. To respect the report window we do two
+  // things: (1) filter issues by `lastSeen`, a documented issue-search token
+  // (https://docs.sentry.io/concepts/search/searchable-properties/issues/), so
+  // stale/inactive issues from the release are excluded, and (2) overwrite
+  // count/userCount with a real windowed aggregate from the organization events
+  // (Discover) endpoint, which does support a genuine date-range aggregate.
+  let query = `is:unresolved release:"${release}" environment:"${environment}"`;
+  if (activeWindow) query += ` lastSeen:-${activeWindow}`;
 
-  // We fetch without statsPeriod first to see all unresolved issues for that release.
-  // The 'count' and 'userCount' in the result will be specific to the query.
-  const issues = await sentryGetPaginated(`/projects/${org}/${project}/issues/`, {
-    query,
-    statsPeriod, // Use statsPeriod to get counts within the window
-    per_page: 100,
-    sort: 'freq'
+  const [issues, windowed] = await Promise.all([
+    sentryGetPaginated(`/projects/${org}/${project}/issues/`, {
+      query,
+      per_page: 100,
+      sort: 'freq'
+    }),
+    getWindowedIssueMetrics(org, project, release, environment, activeWindow),
+  ]);
+
+  return issues.map(i => {
+    const w = windowed.get(String(i.id));
+    return {
+      id: i.id, shortId: i.shortId, title: i.title || i.culprit || 'Sem título',
+      // Prefer the real windowed count/users (Discover aggregate). Falls back to
+      // the issue's lifetime total if the windowed lookup failed (e.g. missing
+      // org:read scope) or didn't include this issue.
+      count: w ? w.count : Number(i.count || i.events || 0),
+      userCount: w ? w.userCount : Number(i.userCount || i.users || 0),
+      windowed: Boolean(w),
+      url: i.permalink, transaction: i.metadata?.transaction || ''
+    };
   });
-
-  return issues.map(i => ({
-    id: i.id, shortId: i.shortId, title: i.title || i.culprit || 'Sem título',
-    // Fallback to events/users if count/userCount are missing (depends on API version/statsPeriod usage)
-    count: Number(i.count || i.events || 0),
-    userCount: Number(i.userCount || i.users || 0),
-    url: i.permalink, transaction: i.metadata?.transaction || ''
-  }));
 }
 
 function summarize(issues) {
@@ -192,11 +273,10 @@ async function buildProductSection(config, platformKey, product) {
   const project = config.platforms[platformKey].project;
   const releases = await getReleasesForProduct(org, project, product);
 
-  // statsPeriod is important for the current release to show the recent impact
+  // Only unresolved issues from the current release with activity within the
+  // configured window are considered "current" (see getIssues for details on
+  // what activeWindow does and doesn't scope).
   const currentIssues = await getIssues(org, project, releases.current, product.environment, config.report.statsPeriod);
-
-  // For the previous release, we want its total impact to compare "health"
-  const previousIssues = await getIssues(org, project, releases.previous, product.environment, null);
 
   const buckets = config.transactions.map(t => ({
     label: t,
@@ -211,7 +291,6 @@ async function buildProductSection(config, platformKey, product) {
     releases,
     currentIssues,
     current: summarize(currentIssues),
-    previous: summarize(previousIssues),
     buckets,
     otherIssues,
   };

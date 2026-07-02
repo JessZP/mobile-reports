@@ -36,6 +36,8 @@ JIRA_EMAIL
 TEAMS_WEBHOOK_URL
 ```
 
+`SENTRY_AUTH_TOKEN` precisa incluir escopo de organizacao (`org:read` ou superior), alem dos escopos de projeto ja usados (`project:read`, `event:read`, `project:releases`). Sem `org:read`, a agregacao de eventos/usuarios por janela (Discover) falha silenciosamente e o relatorio cai no fallback de totais acumulados por issue (ver "Regras > Sentry").
+
 ## Config versionada
 
 Arquivo: `config/products.json`
@@ -93,8 +95,10 @@ triggerBody()?['text']
 - iOS project: `apple-ios`
 - Android project: `android`
 - janela padrao: `14d`
-- issues consideradas: `is:unresolved` na release atual mais recente de cada app/environment
+- issues consideradas: `is:unresolved` na release atual mais recente de cada app/environment, com `lastSeen:-14d` (ou seja, precisam ter tido atividade nos ultimos 14 dias para entrar no relatorio)
 - filtro por environment de producao
+- **contagem por janela**: o endpoint de issues do Sentry nao oferece contagem de eventos/usuarios recortada por tempo (o parametro `statsPeriod` da API so afeta o campo `stats`/grafico, que este script nao usa). Por isso, `count`/`userCount` de cada issue sao obtidos via uma segunda chamada ao endpoint de eventos da organizacao (Discover: `/organizations/{org}/events/` com `count()` e `count_unique(user)`), que agrega de verdade dentro da janela configurada.
+- essa chamada de Discover exige que o `SENTRY_AUTH_TOKEN` tenha escopo de organizacao (`org:read` ou superior). Se faltar esse escopo (ou a chamada falhar por qualquer motivo), o script registra um aviso no log e usa o total acumulado da issue (desde o primeiro evento) como fallback, sem quebrar a execucao.
 
 ### Releases consideradas
 
@@ -104,7 +108,8 @@ triggerBody()?['text']
 
 ### Usuarios impactados
 
-- a secao `2. Quantos usuarios foram impactados?` usa soma de `userCount` das issues dentro da janela configurada
+- a secao `2. Quantos usuarios foram impactados?` usa soma de `userCount` das issues que pertencem a release atual e tiveram atividade na janela configurada
+- o `userCount` de cada issue reflete a janela configurada (via Discover); em caso de fallback (ver nota acima), reflete o total acumulado da issue
 - o total e uma estimativa agregada por plataforma
 - o mesmo usuario pode aparecer em mais de uma issue
 
